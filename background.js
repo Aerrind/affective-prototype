@@ -2,9 +2,20 @@
 
 let creatingLock;
 
-// Allow left-clicking the extension icon to open the Options Dashboard immediately
 chrome.action.onClicked.addListener(() => {
     chrome.runtime.openOptionsPage();
+});
+
+// THE FIX: Detect when the Options dashboard is closed via a persistent port tether
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name === 'options-dashboard') {
+        console.log("[Background] Dashboard connected.");
+        port.onDisconnect.addListener(() => {
+            // This fires flawlessly the exact millisecond the dashboard tab is closed
+            console.log("[Background] Dashboard closed! Resuming background camera...");
+            chrome.runtime.sendMessage({ type: 'RESUME_CAMERA' });
+        });
+    }
 });
 
 async function hasOffscreenDocument(path) {

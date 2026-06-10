@@ -1,8 +1,9 @@
 // content.js
 (function() {
-    // 1. WAKE UP THE BACKGROUND SCRIPT IMMEDIATELY
+    // 1. WAKE UP THE BACKGROUND SCRIPT IMMEDIATELY (Dual-Ping Safety Net)
     try {
         chrome.runtime.sendMessage({ type: 'ENSURE_OFFSCREEN' });
+        chrome.runtime.sendMessage({ type: 'RESUME_CAMERA' }); // Force the camera on
     } catch (e) {}
 
     let lastKnownMouseX = window.innerWidth / 2; 
