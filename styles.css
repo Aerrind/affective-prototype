@@ -1,0 +1,26 @@
+/* styles.css */
+
+.affective-spotlight {
+    position: relative !important;
+    z-index: 999999 !important;
+    border-radius: 8px !important;
+    pointer-events: all !important;
+    
+    /* REMOVED the transform property completely to prevent flipping bugs */
+    
+    /* The shadow darkens the rest of the screen, naturally bringing focus to the element */
+    box-shadow: 
+        0 0 0 9999px rgba(0, 0, 0, 0.85), 
+        0px 0px 40px rgba(0, 150, 255, 0.6) !important;
+        
+    /* Removed transform from the transition rule as well */
+    transition: box-shadow 0.4s ease-in-out !important;
+}
+
+/* Dynamic Information Filtering: Suppressing peripheral noise */
+.affective-suppression {
+    opacity: 0.05 !important;
+    pointer-events: none !important;
+    filter: blur(4px) !important;
+    transition: opacity 0.4s ease, filter 0.4s ease !important;
+}

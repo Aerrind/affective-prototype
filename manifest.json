@@ -1,0 +1,28 @@
+{
+  "manifest_version": 3,
+  "name": "Cognitive Spotlight UI (with TEPR)",
+  "version": "2.0",
+  "description": "Progressive disclosure based on mouse hesitation and pupil dilation.",
+  "permissions": [
+  "offscreen",
+  "activeTab",
+  "tabs"
+],
+  "options_page": "options.html",
+  "background": {
+    "service_worker": "background.js"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "css": ["styles.css"]
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["face-api.min.js", "models/*"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
