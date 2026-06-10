@@ -1,6 +1,6 @@
 // offscreen.js
 
-const MODEL_URL = chrome.runtime.getURL('/models'); 
+const MODEL_URL = chrome.runtime.getURL('models'); 
 const DETECTOR_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.3 });
 
 const WEIGHT_ANGER = 1.2;
@@ -9,55 +9,55 @@ const FATIGUE_THRESHOLD = 0.4;
 
 let isSpikeActive = false;
 let isEngineRunning = false;
-let activeStream = null;
 let modelsLoaded = false;
-let bootAttempts = 0;
+let lastTelemetryTime = 0;
 
 window.addEventListener('load', async () => {
-    console.log("[Offscreen] WAKING UP. Booting AI...");
     try {
         await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
         await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL);
         modelsLoaded = true;
-        console.log("[Offscreen] AI Models Loaded successfully.");
         aggressivelyClaimCamera();
     } catch (e) {
-        console.error("[Offscreen] Failed to load models:", e);
+        // ERROR ROUTING: Tell the dashboard the models failed to load
+        setInterval(() => {
+            chrome.runtime.sendMessage({ 
+                type: 'TEPR_TELEMETRY', fatigue: 'MDL', sad: 'MDL', angry: 'MDL', isSpike: true
+            }).catch(()=>{});
+        }, 1000);
     }
 });
 
 function aggressivelyClaimCamera() {
     if (isEngineRunning || !modelsLoaded) return;
-    
-    bootAttempts++;
-    console.log(`[Offscreen] Attempting to claim camera... (Attempt ${bootAttempts})`);
 
-    navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 } })
-        .then((stream) => {
-            console.log("[Offscreen] SUCCESS: Camera hardware claimed!");
-            activeStream = stream;
-            
-            const video = document.getElementById('offscreen-video');
-            video.srcObject = activeStream;
-            
-            activeStream.getTracks()[0].onended = () => {
-                console.warn("[Offscreen] OS killed the camera stream.");
-                isEngineRunning = false;
-                setTimeout(aggressivelyClaimCamera, 2000);
-            };
-            
-            video.onloadedmetadata = () => {
-                video.play();
-                isEngineRunning = true;
-                bootAttempts = 0; // Reset counter
-                runDetectionLoop(video);
-            };
-        })
-        .catch((err) => {
-            console.error("[Offscreen] ERROR claiming camera:", err.name, err.message);
-            // If it fails, wait 3 seconds and try again. Forever.
-            setTimeout(aggressivelyClaimCamera, 3000);
-        });
+    navigator.mediaDevices.getUserMedia({ 
+        video: { width: { ideal: 640 }, height: { ideal: 480 } } 
+    })
+    .then((stream) => {
+        const video = document.getElementById('offscreen-video');
+        video.srcObject = stream;
+        
+        stream.getTracks()[0].onended = () => {
+            isEngineRunning = false;
+            setTimeout(aggressivelyClaimCamera, 2000);
+        };
+        
+        video.onloadedmetadata = () => {
+            video.width = video.videoWidth || 640;
+            video.height = video.videoHeight || 480;
+            video.play();
+            isEngineRunning = true;
+            runDetectionLoop(video);
+        };
+    })
+    .catch((err) => {
+        // ERROR ROUTING: Tell the dashboard the camera was blocked by the OS/Browser
+        chrome.runtime.sendMessage({ 
+            type: 'TEPR_TELEMETRY', fatigue: 'CAM', sad: 'CAM', angry: 'CAM', isSpike: true
+        }).catch(()=>{});
+        setTimeout(aggressivelyClaimCamera, 3000);
+    });
 }
 
 async function runDetectionLoop(videoElement) {
@@ -70,40 +70,48 @@ async function runDetectionLoop(videoElement) {
 
         if (detection) {
             const expressions = detection.expressions;
-            const fatigueScore = ((expressions.angry || 0) * WEIGHT_ANGER) + ((expressions.sad || 0) * WEIGHT_SAD);
+            const angryScore = expressions.angry || 0;
+            const sadScore = expressions.sad || 0;
+            const fatigueScore = (angryScore * WEIGHT_ANGER) + (sadScore * WEIGHT_SAD);
 
             if (fatigueScore >= FATIGUE_THRESHOLD) {
                 if (!isSpikeActive) {
                     isSpikeActive = true;
-                    chrome.runtime.sendMessage({ type: 'TEPR_SPIKE' });
+                    chrome.runtime.sendMessage({ type: 'TEPR_SPIKE' }).catch(()=>{});
                 }
             } else {
                 if (isSpikeActive) {
                     isSpikeActive = false;
-                    chrome.runtime.sendMessage({ type: 'TEPR_BASELINE' });
+                    chrome.runtime.sendMessage({ type: 'TEPR_BASELINE' }).catch(()=>{});
                 }
+            }
+
+            const now = Date.now();
+            if (now - lastTelemetryTime > 250) { 
+                lastTelemetryTime = now;
+                chrome.runtime.sendMessage({ 
+                    type: 'TEPR_TELEMETRY', 
+                    fatigue: fatigueScore.toFixed(2), 
+                    sad: sadScore.toFixed(2), 
+                    angry: angryScore.toFixed(2),
+                    isSpike: isSpikeActive
+                }).catch(()=>{});
+            }
+        } else {
+            // Heartbeat: Let the UI know the AI is running but sees no face
+            const now = Date.now();
+            if (now - lastTelemetryTime > 500) {
+                lastTelemetryTime = now;
+                chrome.runtime.sendMessage({ 
+                    type: 'TEPR_TELEMETRY', fatigue: '0.00', sad: '0.00', angry: '0.00', isSpike: false
+                }).catch(()=>{});
             }
         }
     } catch (e) {
-        console.error("[Offscreen] Detection loop error:", e);
+        // Keep loop alive on error
     }
 
     if (isEngineRunning) {
         requestAnimationFrame(() => runDetectionLoop(videoElement));
     }
 }
-
-chrome.runtime.onMessage.addListener((message) => {
-    if (message.type === 'PAUSE_CAMERA') {
-        console.log("[Offscreen] Command received: Dropping camera lock.");
-        if (activeStream) {
-            activeStream.getTracks().forEach(t => t.stop());
-            activeStream = null;
-        }
-        isEngineRunning = false;
-    }
-    if (message.type === 'RESUME_CAMERA') {
-        console.log("[Offscreen] Command received: Reclaiming camera lock.");
-        aggressivelyClaimCamera();
-    }
-});

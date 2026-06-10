@@ -1,104 +1,123 @@
 // content.js
 (function() {
-    // 1. WAKE UP THE BACKGROUND SCRIPT IMMEDIATELY (Dual-Ping Safety Net)
-    try {
-        chrome.runtime.sendMessage({ type: 'ENSURE_OFFSCREEN' });
-        chrome.runtime.sendMessage({ type: 'RESUME_CAMERA' }); // Force the camera on
-    } catch (e) {}
-
     let lastKnownMouseX = window.innerWidth / 2; 
     let lastKnownMouseY = window.innerHeight / 2;
     let isOverloaded = false;      
     let isSpotlightActive = false; 
     let currentSpotlightElement = null;
-    let globalSpotlightTimer = null;
-    let isMouseMoving = false;
-    let movementTimeout = null;
 
-    const PAUSE_DURATION = 2000; 
+    const NOISE_SELECTORS = 'nav, aside, footer, iframe, .ads, [role="banner"], [role="complementary"]';
 
-    // --- DASHBOARD UI ---
-    const dashboard = document.createElement('div');
-    dashboard.style.cssText = 'position:fixed; bottom:15px; left:15px; display:flex; gap:8px; z-index:9999999; pointer-events:none; background:rgba(0,0,0,0.5); padding:6px; border-radius:20px;';
+    // CONTINUOUS Wake Up Ping (Prevents Service Worker from sleeping!)
+    setInterval(() => {
+        try { chrome.runtime.sendMessage({ type: 'ENSURE_OFFSCREEN' }); } catch (e) {}
+    }, 2500);
+
+    // --- DUAL-DOT DASHBOARD ---
+    const dashboardContainer = document.createElement('div');
+    dashboardContainer.style.cssText = 'position:fixed; bottom:15px; left:15px; display:flex; align-items:center; gap:8px; z-index:2147483647; background:rgba(0,0,0,0.85); padding:8px 12px; border-radius:20px; font-family: monospace; color: white; border: 1px solid #444; box-shadow: 0 4px 12px rgba(0,0,0,0.3); pointer-events: none;';
     
     const emotionDot = document.createElement('div');
-    emotionDot.style.cssText = 'width:14px; height:14px; border-radius:50%; background:green; box-shadow:0 0 4px rgba(0,255,0,0.5); transition: background 0.2s;';
+    emotionDot.style.cssText = 'width:14px; height:14px; border-radius:50%; background:green; box-shadow:0 0 6px rgba(0,255,0,0.6); transition: background 0.2s;';
     
     const motionDot = document.createElement('div');
-    motionDot.style.cssText = 'width:14px; height:14px; border-radius:50%; background:#ffffff; box-shadow:0 0 4px rgba(255,255,255,0.3); transition: background 0.2s;';
+    motionDot.style.cssText = 'width:14px; height:14px; border-radius:50%; background:#ffffff; box-shadow:0 0 6px rgba(255,255,255,0.4); transition: background 0.2s;';
+
+    const statusText = document.createElement('span');
+    statusText.innerText = "[V4] Mouse Active";
+    statusText.style.cssText = 'font-size:11px; font-weight:bold; color:#aaa;';
+
+    const telemetryText = document.createElement('span');
+    telemetryText.innerText = "F: -- | S: -- | A: --";
+    telemetryText.style.cssText = 'font-size:11px; font-weight:bold; color:#4ade80; margin-left: 8px; border-left: 1px solid #555; padding-left: 8px;';
+
+    dashboardContainer.appendChild(emotionDot);
+    dashboardContainer.appendChild(motionDot);
+    dashboardContainer.appendChild(statusText);
+    dashboardContainer.appendChild(telemetryText);
     
-    dashboard.appendChild(emotionDot);
-    dashboard.appendChild(motionDot);
-    document.body.appendChild(dashboard);
+    // Attach to HTML root to guarantee it bypasses weird body tags
+    document.documentElement.appendChild(dashboardContainer);
 
     // --- MOUSE TRACKING ---
-    document.addEventListener('mousemove', (e) => {
+    let countdownValue = 2.0;
+    let countdownInterval = null;
+    let movementTimeout = null;
+
+    function resetMouseTimer(e) {
         lastKnownMouseX = e.clientX;
         lastKnownMouseY = e.clientY;
-        isMouseMoving = true;
 
         motionDot.style.background = '#ffffff'; 
-        motionDot.style.boxShadow = '0 0 4px rgba(255,255,255,0.3)';
-
-        if (isSpotlightActive && isOverloaded) {
-            triggerSpotlight();
-            return;
-        }
-
-        clearTimeout(globalSpotlightTimer);
+        motionDot.style.boxShadow = '0 0 6px rgba(255,255,255,0.4)';
+        statusText.innerText = "[V4] Mouse Active";
+        statusText.style.color = "#aaa";
+        
+        clearInterval(countdownInterval);
         clearTimeout(movementTimeout);
+        countdownValue = 2.0;
 
-        movementTimeout = setTimeout(() => {
-            isMouseMoving = false;
-        }, 100);
-    });
+        if (isSpotlightActive && !isOverloaded) resetUI();
 
-    setInterval(() => {
-        if (!isMouseMoving) { 
-            clearTimeout(globalSpotlightTimer);
-            motionDot.style.background = '#00bfff'; 
-            motionDot.style.boxShadow = '0 0 8px #00bfff';
+        movementTimeout = setTimeout(() => { startCountdown(); }, 100);
+    }
 
-            if (isOverloaded) {
-                globalSpotlightTimer = setTimeout(triggerSpotlight, PAUSE_DURATION);
-            }
-        }
-    }, 500);
-
-    // --- AI TRACKING ---
-    chrome.runtime.onMessage.addListener((message) => {
-        if (message.type === 'TEPR_SPIKE') {
-            emotionDot.style.background = 'red';
-            emotionDot.style.boxShadow = '0 0 8px red';
-            isOverloaded = true;
+    function startCountdown() {
+        statusText.innerText = `[V4] Idle: ${countdownValue.toFixed(1)}s`;
+        statusText.style.color = "#00bfff";
+        
+        countdownInterval = setInterval(() => {
+            countdownValue -= 0.1;
             
-            if (!isMouseMoving) {
-                clearTimeout(globalSpotlightTimer);
-                globalSpotlightTimer = setTimeout(triggerSpotlight, PAUSE_DURATION);
+            if (countdownValue <= 0) {
+                clearInterval(countdownInterval);
+                countdownValue = 0;
+                statusText.innerText = "[V4] SPOTLIGHT READY";
+                statusText.style.color = "#eab308";
+                motionDot.style.background = '#00bfff'; 
+                motionDot.style.boxShadow = '0 0 10px #00bfff';
+
+                if (isOverloaded) triggerSpotlightAt(lastKnownMouseX, lastKnownMouseY);
+            } else {
+                statusText.innerText = `[V4] Idle: ${countdownValue.toFixed(1)}s`;
             }
-        } else if (message.type === 'TEPR_BASELINE') {
-            emotionDot.style.background = 'green';
-            emotionDot.style.boxShadow = '0 0 4px rgba(0,255,0,0.5)';
+        }, 100);
+    }
+
+    document.addEventListener('mousemove', resetMouseTimer);
+
+    // --- COMMUNICATION INTERFACE ---
+    chrome.runtime.onMessage.addListener((message) => {
+        if (message.type === 'TEPR_TELEMETRY') {
+            telemetryText.innerText = `F: ${message.fatigue} | S: ${message.sad} | A: ${message.angry}`;
+            telemetryText.style.color = message.isSpike ? '#ff4a4a' : '#4ade80';
+        }
+
+        if (message.type === 'TEPR_SPIKE') {
+            isOverloaded = true;
+            emotionDot.style.background = 'red';
+            emotionDot.style.boxShadow = '0 0 10px red';
+            if (countdownValue === 0) triggerSpotlightAt(lastKnownMouseX, lastKnownMouseY);
+        }
+        
+        if (message.type === 'TEPR_BASELINE') {
             isOverloaded = false;
-            clearTimeout(globalSpotlightTimer);
+            emotionDot.style.background = 'green';
+            emotionDot.style.boxShadow = '0 0 6px rgba(0,255,0,0.6)';
             resetUI();
         }
     });
 
-    function triggerSpotlight() {
-        let target = document.elementFromPoint(lastKnownMouseX, lastKnownMouseY);
-        if (!target) return;
+    function triggerSpotlightAt(x, y) {
+        let element = document.elementFromPoint(x, y);
+        if (!element) return;
 
-        let container = target;
-        const structuralTags = ['DIV', 'SECTION', 'ARTICLE', 'MAIN', 'FORM', 'UL', 'P'];
-
-        while (container && container !== document.body) {
-            let rect = container.getBoundingClientRect();
-            let style = window.getComputedStyle(container);
-            let isGoodSize = rect.width > 100 && rect.height > 50;
-            let isVisible = style.backgroundColor !== 'rgba(0, 0, 0, 0)' || structuralTags.includes(container.tagName);
-
-            if (isGoodSize && isVisible) break; 
+        let container = element;
+        while (container && container !== document.body && container !== document.documentElement) {
+            const tag = container.tagName.toLowerCase();
+            if (tag === 'p' || tag === 'article' || tag === 'section' || tag === 'div' || tag === 'main') {
+                break; 
+            }
             container = container.parentElement;
         }
         
@@ -109,12 +128,15 @@
             currentSpotlightElement = container;
             container.classList.add('affective-spotlight');
             
-            document.querySelectorAll('nav, aside, footer, iframe, .ads').forEach(el => {
+            document.querySelectorAll(NOISE_SELECTORS).forEach(el => {
                 if (!container.contains(el) && !el.contains(container)) {
                     el.classList.add('affective-suppression');
                 }
             });
+            
             isSpotlightActive = true;
+        } else {
+            if (currentSpotlightElement !== null) resetUI();
         }
     }
 
@@ -129,7 +151,6 @@
         if (e.key === 'Escape') {
             isOverloaded = false;
             emotionDot.style.background = 'green';
-            clearTimeout(globalSpotlightTimer);
             resetUI();
         }
     });

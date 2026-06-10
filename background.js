@@ -1,63 +1,23 @@
 // background.js
 
-let creatingLock;
+let isOptionsPageOpen = false;
 
 chrome.action.onClicked.addListener(() => {
     chrome.runtime.openOptionsPage();
 });
 
-// THE FIX: Detect when the Options dashboard is closed via a persistent port tether
-chrome.runtime.onConnect.addListener((port) => {
-    if (port.name === 'options-dashboard') {
-        console.log("[Background] Dashboard connected.");
-        port.onDisconnect.addListener(() => {
-            // This fires flawlessly the exact millisecond the dashboard tab is closed
-            console.log("[Background] Dashboard closed! Resuming background camera...");
-            chrome.runtime.sendMessage({ type: 'RESUME_CAMERA' });
-        });
-    }
-});
-
-async function hasOffscreenDocument(path) {
-    const offscreenUrl = chrome.runtime.getURL(path);
-    if (chrome.runtime.getContexts) {
-        const contexts = await chrome.runtime.getContexts({
-            contextTypes: ['OFFSCREEN_DOCUMENT'],
-            documentUrls: [offscreenUrl]
-        });
-        return contexts.length > 0;
-    } else {
-        const matchedClients = await clients.matchAll();
-        for (const client of matchedClients) {
-            if (client.url === offscreenUrl) return true;
-        }
-        return false;
-    }
-}
-
 async function setupOffscreen() {
-    const path = 'offscreen.html';
-    if (creatingLock) {
-        await creatingLock;
-        return;
-    }
-
-    const exists = await hasOffscreenDocument(path);
-    if (exists) return;
-
+    if (isOptionsPageOpen) return;
+    
+    // Safest way to handle offscreen creation in MV3
     try {
-        creatingLock = chrome.offscreen.createDocument({
-            url: path,
+        await chrome.offscreen.createDocument({
+            url: 'offscreen.html',
             reasons: ['USER_MEDIA'],
-            justification: 'Tracks emotion to manage cognitive load UI.'
+            justification: 'Emotion Tracking'
         });
-        await creatingLock;
     } catch (err) {
-        if (!err.message.includes('already created') && !err.message.includes('single offscreen document')) {
-            console.error("[Background] Offscreen creation error:", err);
-        }
-    } finally {
-        creatingLock = null;
+        // If it throws an error saying "Only a single offscreen document may be created", ignore it! That means it's working.
     }
 }
 
@@ -65,14 +25,35 @@ chrome.runtime.onInstalled.addListener(setupOffscreen);
 chrome.runtime.onStartup.addListener(setupOffscreen);
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'ENSURE_OFFSCREEN') {
+    if (message.type === 'ENSURE_OFFSCREEN' || message.type === 'RESUME_CAMERA') {
         setupOffscreen();
+        sendResponse({status: "ok"});
     }
-    if (message.type === 'TEPR_SPIKE' || message.type === 'TEPR_BASELINE') {
-        chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-            if (tabs[0] && tabs[0].url && !tabs[0].url.startsWith('chrome')) {
-                chrome.tabs.sendMessage(tabs[0].id, { type: message.type }).catch(() => {});
+    
+    if (message.type === 'PAUSE_CAMERA') {
+        chrome.offscreen.closeDocument().catch(() => {});
+    }
+    
+    if (message.type === 'TEPR_SPIKE' || message.type === 'TEPR_BASELINE' || message.type === 'TEPR_TELEMETRY') {
+        // BROADCAST to all valid tabs. This prevents the "DevTools open" routing failure.
+        chrome.tabs.query({}, (tabs) => {
+            for (let tab of tabs) {
+                if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')) {
+                    chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+                }
             }
+        });
+    }
+    return true; // Keep channel open
+});
+
+chrome.runtime.onConnect.addListener((port) => {
+    if (port.name === 'options-lifecycle') {
+        isOptionsPageOpen = true; 
+        chrome.offscreen.closeDocument().catch(() => {});
+        port.onDisconnect.addListener(() => {
+            isOptionsPageOpen = false; 
+            setupOffscreen();
         });
     }
 });
