@@ -1,53 +1,20 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Calibration Dashboard</title>
+    <title>Calibration</title>
     <style>
         body { font-family: sans-serif; padding: 30px; text-align: center; background: #1e1e1e; color: white;}
-        button { padding: 10px 20px; font-size: 16px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; margin-bottom: 15px;}
-        #status-box { font-size: 18px; margin-bottom: 20px; }
-        
-        .dashboard-layout { display: flex; justify-content: center; align-items: flex-start; gap: 25px; max-width: 1000px; margin: 0 auto; }
-        .video-container { position: relative; border-radius: 8px; overflow: hidden; box-shadow: 0 4px 15px rgba(0,0,0,0.5); background: #000; }
-        
-        video, canvas { display: block; }
-        canvas { position: absolute; top: 0; left: 0; }
-
-        .data-panel { background: #2a2a2a; padding: 20px; border-radius: 8px; text-align: left; min-width: 250px; box-shadow: inset 0 0 10px rgba(0,0,0,0.5);}
-        .data-row { margin-bottom: 15px; font-family: monospace; font-size: 16px; border-bottom: 1px solid #444; padding-bottom: 5px;}
-        .data-label { color: #888; display: inline-block; width: 120px;}
-        .data-value { font-weight: bold; color: #4ade80;}
+        button { padding: 12px 24px; font-size: 18px; cursor: pointer; background: #007bff; color: white; border: none; border-radius: 5px; margin-bottom: 20px;}
+        #status-box { font-size: 20px; font-weight: bold; }
+        video { margin-top: 20px; border-radius: 8px; border: 2px solid #555; background: black; }
     </style>
-    <script src="face-api.min.js"></script>
 </head>
 <body>
-    <h2>Cognitive Spotlight: AI Fatigue Calibration</h2>
-    <p>Grant access to test the emotion and fatigue tracking engine.</p>
+    <h2>Cognitive Spotlight Permissions</h2>
+    <p>Click the button below to grant the extension camera access.<br><b>You only need to do this once.</b></p>
     <button id="request-cam">Start Camera</button>
     <div id="status-box"></div>
-
-    <div class="dashboard-layout" id="tracker-view" style="display: none;">
-        <div class="video-container">
-            <video id="webcam" width="640" height="480" autoplay playsinline muted></video>
-            <canvas id="output_canvas" width="640" height="480"></canvas>
-        </div>
-
-        <div class="data-panel">
-            <h3>[AI DIAGNOSTICS]</h3>
-            <div class="data-row">
-                <span class="data-label">Status:</span> 
-                <span class="data-value" id="hud-status" style="color: #eab308;">Waiting for AI...</span>
-            </div>
-            <div class="data-row">
-                <span class="data-label">Fatigue Score:</span> 
-                <span class="data-value" id="hud-fatigue">--</span>
-            </div>
-            <div class="data-row">
-                <span class="data-label">Top Emotions:</span> 
-                <span class="data-value" id="hud-emotions" style="font-size: 12px;">--</span>
-            </div>
-        </div>
-    </div>
+    <video id="webcam" width="640" height="480" autoplay playsinline muted style="display:none;"></video>
     
     <script src="options.js"></script>
 </body>

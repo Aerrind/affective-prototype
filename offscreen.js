@@ -1,80 +1,78 @@
 // offscreen.js
 
-const MODEL_URL = chrome.runtime.getURL('models'); 
-const DETECTOR_OPTIONS = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.3 });
-
-const WEIGHT_ANGER = 1.2;
-const WEIGHT_SAD = 1.5;
-const FATIGUE_THRESHOLD = 0.4; 
-
-let isSpikeActive = false;
 let isEngineRunning = false;
-let modelsLoaded = false;
+let isSpikeActive = false;
 let lastTelemetryTime = 0;
 
-window.addEventListener('load', async () => {
-    try {
-        await faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL);
-        await faceapi.nets.faceExpressionNet.loadFromUri(MODEL_URL);
-        modelsLoaded = true;
-        aggressivelyClaimCamera();
-    } catch (e) {
-        // ERROR ROUTING: Tell the dashboard the models failed to load
-        setInterval(() => {
-            chrome.runtime.sendMessage({ 
-                type: 'TEPR_TELEMETRY', fatigue: 'MDL', sad: 'MDL', angry: 'MDL', isSpike: true
-            }).catch(()=>{});
-        }, 1000);
+async function init() {
+    // THE FIX: Auto-resolve the path. This guarantees it finds the models 
+    // exactly how it did when the camera successfully turned on previously.
+    const possiblePaths = [
+        chrome.runtime.getURL('models'),
+        '/models'
+    ];
+
+    let modelsLoaded = false;
+
+    for (let path of possiblePaths) {
+        try {
+            await faceapi.nets.tinyFaceDetector.loadFromUri(path);
+            await faceapi.nets.faceExpressionNet.loadFromUri(path);
+            modelsLoaded = true;
+            break; // Models found! Break out of the loop.
+        } catch (e) {
+            // Silently try the next path
+        }
     }
-});
 
-function aggressivelyClaimCamera() {
-    if (isEngineRunning || !modelsLoaded) return;
-
-    navigator.mediaDevices.getUserMedia({ 
-        video: { width: { ideal: 640 }, height: { ideal: 480 } } 
-    })
-    .then((stream) => {
-        const video = document.getElementById('offscreen-video');
-        video.srcObject = stream;
-        
-        stream.getTracks()[0].onended = () => {
-            isEngineRunning = false;
-            setTimeout(aggressivelyClaimCamera, 2000);
-        };
-        
-        video.onloadedmetadata = () => {
-            video.width = video.videoWidth || 640;
-            video.height = video.videoHeight || 480;
-            video.play();
-            isEngineRunning = true;
-            runDetectionLoop(video);
-        };
-    })
-    .catch((err) => {
-        // ERROR ROUTING: Tell the dashboard the camera was blocked by the OS/Browser
-        chrome.runtime.sendMessage({ 
-            type: 'TEPR_TELEMETRY', fatigue: 'CAM', sad: 'CAM', angry: 'CAM', isSpike: true
-        }).catch(()=>{});
-        setTimeout(aggressivelyClaimCamera, 3000);
-    });
+    if (modelsLoaded) {
+        claimCamera();
+    } else {
+        broadcastError('MDL'); 
+    }
 }
 
-async function runDetectionLoop(videoElement) {
-    if (!isEngineRunning) return; 
+function claimCamera() {
+    if (isEngineRunning) return;
+
+    navigator.mediaDevices.getUserMedia({ video: { width: { ideal: 640 }, height: { ideal: 480 } } })
+        .then((stream) => {
+            const video = document.getElementById('offscreen-video');
+            video.srcObject = stream;
+            
+            stream.getTracks()[0].onended = () => {
+                isEngineRunning = false;
+                setTimeout(claimCamera, 1000);
+            };
+
+            video.onloadedmetadata = () => {
+                video.width = video.videoWidth || 640;
+                video.height = video.videoHeight || 480;
+                video.play();
+                isEngineRunning = true;
+                
+                // Start the un-freezable mathematical timer loop
+                detectLoop(video);
+            };
+        })
+        .catch((err) => {
+            broadcastError('CAM'); 
+            setTimeout(claimCamera, 3000);
+        });
+}
+
+async function detectLoop(video) {
+    if (!isEngineRunning) return;
 
     try {
-        const detection = await faceapi
-            .detectSingleFace(videoElement, DETECTOR_OPTIONS)
-            .withFaceExpressions();
-
+        const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions()).withFaceExpressions();
+        
         if (detection) {
-            const expressions = detection.expressions;
-            const angryScore = expressions.angry || 0;
-            const sadScore = expressions.sad || 0;
-            const fatigueScore = (angryScore * WEIGHT_ANGER) + (sadScore * WEIGHT_SAD);
+            const ex = detection.expressions;
+            // Calculate fatigue based on your project weights
+            const fatigue = (ex.angry || 0) * 1.2 + (ex.sad || 0) * 1.5;
 
-            if (fatigueScore >= FATIGUE_THRESHOLD) {
+            if (fatigue >= 0.4) {
                 if (!isSpikeActive) {
                     isSpikeActive = true;
                     chrome.runtime.sendMessage({ type: 'TEPR_SPIKE' }).catch(()=>{});
@@ -87,31 +85,39 @@ async function runDetectionLoop(videoElement) {
             }
 
             const now = Date.now();
-            if (now - lastTelemetryTime > 250) { 
+            if (now - lastTelemetryTime > 250) {
                 lastTelemetryTime = now;
-                chrome.runtime.sendMessage({ 
-                    type: 'TEPR_TELEMETRY', 
-                    fatigue: fatigueScore.toFixed(2), 
-                    sad: sadScore.toFixed(2), 
-                    angry: angryScore.toFixed(2),
+                chrome.runtime.sendMessage({
+                    type: 'TEPR_TELEMETRY',
+                    fatigue: fatigue.toFixed(2), 
+                    sad: (ex.sad||0).toFixed(2), 
+                    angry: (ex.angry||0).toFixed(2),
                     isSpike: isSpikeActive
                 }).catch(()=>{});
             }
         } else {
-            // Heartbeat: Let the UI know the AI is running but sees no face
+            // Heartbeat: Camera is running, but sees no face right now
             const now = Date.now();
             if (now - lastTelemetryTime > 500) {
                 lastTelemetryTime = now;
                 chrome.runtime.sendMessage({ 
-                    type: 'TEPR_TELEMETRY', fatigue: '0.00', sad: '0.00', angry: '0.00', isSpike: false
+                    type: 'TEPR_TELEMETRY', fatigue: '0.00', sad: '0.00', angry: '0.00', isSpike: false 
                 }).catch(()=>{});
             }
         }
     } catch (e) {
-        // Keep loop alive on error
+        // Keep the loop alive even if a frame drops
     }
 
+    // THE FIX: This forces the loop to run in the background, 
+    // bypassing Chrome's aggressive background throttling.
     if (isEngineRunning) {
-        requestAnimationFrame(() => runDetectionLoop(videoElement));
+        setTimeout(() => detectLoop(video), 200); 
     }
 }
+
+function broadcastError(code) {
+    chrome.runtime.sendMessage({ type: 'TEPR_TELEMETRY', fatigue: code, sad: code, angry: code, isSpike: false }).catch(()=>{});
+}
+
+window.addEventListener('load', init);

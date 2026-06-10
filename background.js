@@ -1,59 +1,63 @@
 // background.js
 
-let isOptionsPageOpen = false;
+let isOptionsOpen = false;
 
 chrome.action.onClicked.addListener(() => {
     chrome.runtime.openOptionsPage();
 });
 
 async function setupOffscreen() {
-    if (isOptionsPageOpen) return;
+    if (isOptionsOpen) return; // Will not boot if Options tab holds the hardware lock
     
-    // Safest way to handle offscreen creation in MV3
+    const existingContexts = await chrome.runtime.getContexts({
+        contextTypes: ['OFFSCREEN_DOCUMENT'],
+        documentUrls: [chrome.runtime.getURL('offscreen.html')]
+    });
+    
+    if (existingContexts.length > 0) return;
+
     try {
         await chrome.offscreen.createDocument({
             url: 'offscreen.html',
             reasons: ['USER_MEDIA'],
-            justification: 'Emotion Tracking'
+            justification: 'Emotion tracking'
         });
-    } catch (err) {
-        // If it throws an error saying "Only a single offscreen document may be created", ignore it! That means it's working.
-    }
+    } catch (err) {}
 }
 
-chrome.runtime.onInstalled.addListener(setupOffscreen);
-chrome.runtime.onStartup.addListener(setupOffscreen);
-
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-    if (message.type === 'ENSURE_OFFSCREEN' || message.type === 'RESUME_CAMERA') {
+chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === 'PING') {
         setupOffscreen();
-        sendResponse({status: "ok"});
+        sendResponse({ status: "alive" });
+        return false;
     }
     
-    if (message.type === 'PAUSE_CAMERA') {
-        chrome.offscreen.closeDocument().catch(() => {});
-    }
-    
-    if (message.type === 'TEPR_SPIKE' || message.type === 'TEPR_BASELINE' || message.type === 'TEPR_TELEMETRY') {
-        // BROADCAST to all valid tabs. This prevents the "DevTools open" routing failure.
+    if (msg.type === 'TEPR_TELEMETRY' || msg.type === 'TEPR_SPIKE' || msg.type === 'TEPR_BASELINE') {
         chrome.tabs.query({}, (tabs) => {
             for (let tab of tabs) {
+                // Route the AI data exclusively to regular websites
                 if (tab.url && !tab.url.startsWith('chrome://') && !tab.url.startsWith('edge://')) {
-                    chrome.tabs.sendMessage(tab.id, message).catch(() => {});
+                    chrome.tabs.sendMessage(tab.id, msg).catch(() => {});
                 }
             }
         });
     }
-    return true; // Keep channel open
+    
+    return true;
 });
 
+// THE FIX: Bulletproof hardware lock manager
 chrome.runtime.onConnect.addListener((port) => {
     if (port.name === 'options-lifecycle') {
-        isOptionsPageOpen = true; 
-        chrome.offscreen.closeDocument().catch(() => {});
+        isOptionsOpen = true;
+        chrome.offscreen.closeDocument().catch(() => {}); // Kill background AI
+        
         port.onDisconnect.addListener(() => {
-            isOptionsPageOpen = false; 
-            setupOffscreen();
+            isOptionsOpen = false;
+            setupOffscreen(); // Reboot background AI the millisecond the tab closes
         });
     }
 });
+
+chrome.runtime.onStartup.addListener(setupOffscreen);
+chrome.runtime.onInstalled.addListener(setupOffscreen);
